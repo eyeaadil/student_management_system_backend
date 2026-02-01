@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Get Firebase ID Token</title>
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
+</head>
+<body style="font-family: sans-serif; padding: 50px;">
+  <h2>Firebase Token Generator</h2>
+  
+  <div id="recaptcha-container"></div>
+
+  <label><b>Step 1: Send OTP</b></label><br>
+  <input type="text" id="phoneNumber" value="+919999999999" placeholder="+91..." style="padding: 10px; width: 300px;">
+  <button onclick="sendOtp()" style="padding: 10px; cursor: pointer;">Send OTP</button>
+  
+  <br><br><hr><br>
+  
+  <label><b>Step 2: Verify Code</b></label><br>
+  <input type="text" id="otpCode" placeholder="Enter 123456" style="padding: 10px; width: 300px;">
+  <button onclick="verifyOtp()" style="padding: 10px; cursor: pointer;">Verify & Get Token</button>
+
+  <h3>Your ID Token (Copy this for Postman):</h3>
+  <textarea id="tokenResult" rows="6" cols="80" style="border: 2px solid green; padding: 10px;"></textarea>
+
+  <script>
+    // --- YOUR CONFIGURATION ---
+    const firebaseConfig = {
+      apiKey: "AIzaSyCuA8j63qtl39169COxxpybJWPbj3J__R8",
+      authDomain: "student-management-syste-c5674.firebaseapp.com",
+      projectId: "student-management-syste-c5674",
+      storageBucket: "student-management-syste-c5674.firebasestorage.app",
+      messagingSenderId: "567084301707",
+      appId: "1:567084301707:web:d8d355727a05b7b2ea038e",
+      measurementId: "G-H19RC1NTRY"
+    };
+
+    // Initialize Firebase
+    if (!firebase.apps.length) {
+      firebase.initializeApp(firebaseConfig);
+    }
+
+    // Initialize Recaptcha
+    // We use a global variable so we can reset it if needed
+    window.recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', {
+      'size': 'invisible',
+      'callback': (response) => {
+        // reCAPTCHA solved, allow signInWithPhoneNumber.
+        console.log("Recaptcha verified");
+      }
+    });
+
+    let confirmationResult = null; // Store the result globally
+
+    function sendOtp() {
+      const phoneNumber = document.getElementById('phoneNumber').value;
+      const appVerifier = window.recaptchaVerifier;
+
+      console.log("Attempting to send OTP to:", phoneNumber);
+      document.getElementById('tokenResult').value = "Sending...";
+
+      firebase.auth().signInWithPhoneNumber(phoneNumber, appVerifier)
+        .then((confirmation) => {
+          // --- SUCCESS ---
+          confirmationResult = confirmation;
+          console.log("OTP Sent!", confirmation);
+          document.getElementById('tokenResult').value = "OTP Sent! Check your phone (or enter 123456 for test numbers).";
+          alert("OTP Sent! Please enter the code in the box below.");
+        })
+        .catch((error) => {
+          // --- ERROR ---
+          console.error("SMS Error:", error);
+          document.getElementById('tokenResult').value = "Error: " + error.message;
+          alert("Error sending OTP: " + error.message);
+          
+          // Reset captcha so user can try again
+          if(window.recaptchaVerifier) {
+            window.recaptchaVerifier.clear();
+          }
+        });
+    }
+
+    function verifyOtp() {
+      // --- FIX: Check if Step 1 worked first ---
+      if (!confirmationResult) {
+        alert("ERROR: The OTP was not sent successfully yet.\nPlease click 'Send OTP' first and wait for the confirmation alert.");
+        return;
+      }
+
+      const code = document.getElementById('otpCode').value;
+      
+      confirmationResult.confirm(code).then((result) => {
+        // User signed in successfully.
+        console.log("User signed in:", result.user);
+        return result.user.getIdToken();
+      }).then((token) => {
+        // Display the token
+        document.getElementById('tokenResult').value = token;
+        console.log("Token generated:", token);
+        alert("Success! Copy the token from the green box.");
+      }).catch((error) => {
+        console.error("Verify Error:", error);
+        alert("Incorrect OTP or Token Error: " + error.message);
+      });
+    }
+  </script>
+</body>
+</html>
