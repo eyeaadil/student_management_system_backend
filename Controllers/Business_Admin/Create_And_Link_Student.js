@@ -1,7 +1,7 @@
 import Supabase_Client from '../../Supabase_Client.js';
 
 
-export const   Create_Student_And_Link_To_Class_BA = async (req, res) => {
+export const Create_Student_And_Link_To_Class_BA = async (req, res) => {
   const {
     School_Id,
     Class_Id,
@@ -19,6 +19,7 @@ export const   Create_Student_And_Link_To_Class_BA = async (req, res) => {
   }
 
   let Final_Student_Id = null;
+  let School_Enrollment_Id = null;
 
   try {
     // --- STEP 1: PRE-CHECK (Only for Unique Email) ---
@@ -35,18 +36,33 @@ export const   Create_Student_And_Link_To_Class_BA = async (req, res) => {
       }
     }
 
-    // --- STEP 2: CREATE NEW STUDENT ---
-    // We always insert a NEW row because phone numbers are not unique IDs anymore.
+    // --- STEP 2: VERIFY SCHOOL AND CLASS EXIST ---
+    const [School_Check, Class_Check] = await Promise.all([
+      Supabase_Client.from('School').select('school_id').eq('school_id', School_Id).single(),
+      Supabase_Client.from('Class').select('school_id').eq('class_id', Class_Id).single()
+    ]);
+
+    if (School_Check.error || !School_Check.data) {
+      return res.status(400).json({ success: false, message: "Invalid School_Id. School not found." });
+    }
+
+    if (Class_Check.error || !Class_Check.data) {
+      return res.status(400).json({ success: false, message: "Invalid Class_Id. Class not found." });
+    }
+
+    // Verify class belongs to the specified school
+    if (Class_Check.data.school_id != School_Id) {
+      return res.status(400).json({ success: false, message: "Class does not belong to the specified school." });
+    }
+
+    // --- STEP 3: CREATE NEW STUDENT (Without school_id) ---
     const { data: New_Student, error: Create_Err } = await Supabase_Client
       .from('Student')
       .insert([{
-        school_id: School_Id,
         student_name: Student_Name,
         parent_name: Parent_Name,
         phone: Phone,
         email: Email || null
-        // Note: Student table only has these columns
-        // password, address, gender, dob do not exist in the schema
       }])
       .select()
       .single();
@@ -55,8 +71,27 @@ export const   Create_Student_And_Link_To_Class_BA = async (req, res) => {
 
     Final_Student_Id = New_Student.student_id;
 
-    // --- STEP 3: LINK TO CLASS ---
-    const { data: Enrollment, error: Link_Error } = await Supabase_Client
+    // --- STEP 4: CREATE SCHOOL ENROLLMENT ---
+    const { data: School_Enrollment, error: Enroll_Err } = await Supabase_Client
+      .from('Student_School_Enrollment')
+      .insert([{
+        student_id: Final_Student_Id,
+        school_id: School_Id,
+        is_active: true
+      }])
+      .select()
+      .single();
+
+    if (Enroll_Err) {
+      // Rollback: Delete student if enrollment fails
+      await Supabase_Client.from('Student').delete().eq('student_id', Final_Student_Id);
+      throw Enroll_Err;
+    }
+
+    School_Enrollment_Id = School_Enrollment.enrollment_id;
+
+    // --- STEP 5: LINK TO CLASS ---
+    const { data: Class_Enrollment, error: Link_Error } = await Supabase_Client
       .from('Student_Class_Enrollment_Relation')
       .insert([{
         student_id: Final_Student_Id,
@@ -74,19 +109,24 @@ export const   Create_Student_And_Link_To_Class_BA = async (req, res) => {
           // IMPORTANT: We tell frontend the Student ID so they can retry linking later
           message: `Student Profile Created (ID: ${Final_Student_Id}), BUT Roll No ${Roll_No} is already taken in this class. Please update Roll No.`,
           student_id: Final_Student_Id,
+          school_enrollment_id: School_Enrollment_Id,
           error_type: "ROLL_NO_COLLISION"
         });
       }
+      // Rollback: Delete school enrollment and student on other errors
+      await Supabase_Client.from('Student_School_Enrollment').delete().eq('enrollment_id', School_Enrollment_Id);
+      await Supabase_Client.from('Student').delete().eq('student_id', Final_Student_Id);
       throw Link_Error;
     }
 
     // --- SUCCESS ---
     res.status(201).json({
       success: true,
-      message: "Student Created and Enrolled Successfully.",
+      message: "Student Created, Enrolled in School, and Linked to Class Successfully.",
       data: {
         student: New_Student,
-        enrollment: Enrollment
+        school_enrollment: School_Enrollment,
+        class_enrollment: Class_Enrollment
       }
     });
 

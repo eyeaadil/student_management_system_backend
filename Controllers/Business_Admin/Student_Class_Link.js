@@ -1,14 +1,9 @@
-import Supabase_Client from '../../Supabase_Client.js'; 
+import Supabase_Client from '../../Supabase_Client.js';
 
 
 
-
-
-
-
-
-
-// --- 1. LINK (ENROLL) STUDENT ---
+// --- 1. LINK (ENROLL) STUDENT TO CLASS ---
+// Business Admin can link any student to any class
 export const Link_Student_To_Class_BA = async (req, res) => {
   const { Student_Id, Class_Id, Roll_No } = req.body;
 
@@ -17,13 +12,51 @@ export const Link_Student_To_Class_BA = async (req, res) => {
   }
 
   try {
+    // Verify student exists
+    const { data: Student, error: Student_Error } = await Supabase_Client
+      .from('Student')
+      .select('student_id')
+      .eq('student_id', Student_Id)
+      .single();
+
+    if (Student_Error || !Student) {
+      return res.status(404).json({ success: false, message: "Student not found." });
+    }
+
+    // Get class info to know which school
+    const { data: Class_Info, error: Class_Error } = await Supabase_Client
+      .from('Class')
+      .select('school_id')
+      .eq('class_id', Class_Id)
+      .single();
+
+    if (Class_Error || !Class_Info) {
+      return res.status(404).json({ success: false, message: "Class not found." });
+    }
+
+    // Verify student is enrolled at the school this class belongs to
+    const { data: School_Enrollment, error: Enroll_Error } = await Supabase_Client
+      .from('Student_School_Enrollment')
+      .select('enrollment_id')
+      .eq('student_id', Student_Id)
+      .eq('school_id', Class_Info.school_id)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (!School_Enrollment) {
+      return res.status(400).json({
+        success: false,
+        message: "Student is not enrolled at the school this class belongs to. Please enroll the student in the school first."
+      });
+    }
+
     // Attempt Insert
     const { data: Enrollment, error: Db_Error } = await Supabase_Client
       .from('Student_Class_Enrollment_Relation')
       .insert([
-        { 
-          student_id: Student_Id, 
-          class_id: Class_Id, 
+        {
+          student_id: Student_Id,
+          class_id: Class_Id,
           roll_no: Roll_No || null // Roll No is optional
         }
       ])
@@ -33,7 +66,6 @@ export const Link_Student_To_Class_BA = async (req, res) => {
     if (Db_Error) {
       // Handle Unique Conflicts
       if (Db_Error.code === '23505') {
-        // We need to check WHICH constraint failed
         if (Db_Error.details.includes('student_id')) {
           return res.status(409).json({ success: false, message: "This Student is already enrolled in a class." });
         }
@@ -72,24 +104,13 @@ export const Unlink_Student_BA = async (req, res) => {
 
     if (error) throw error;
 
-    res.json({ success: true, message: "Student unlinked successfully." });
+    res.json({ success: true, message: "Student unlinked from class successfully." });
 
   } catch (Error) {
     console.error("Unlink BA Error:", Error.message);
     res.status(500).json({ success: false, message: "Server Error", error: Error.message });
   }
 };
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -104,6 +125,7 @@ export const Get_Class_Students_BA = async (req, res) => {
 
   try {
     // 2. Fetch Enrollment + Student Details
+    // Student no longer has school_id, but we can get school info from enrollment
     const { data: List, error } = await Supabase_Client
       .from('Student_Class_Enrollment_Relation')
       .select(`

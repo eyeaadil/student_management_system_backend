@@ -14,9 +14,9 @@ export const Create_Academic_Session = async (req, res) => {
     const { data: New_Session, error: Db_Error } = await Supabase_Client
       .from('AcademicSession')
       .insert([
-        { 
-          session_name: Session_Name, 
-          start_date: Start_Date, 
+        {
+          session_name: Session_Name,
+          start_date: Start_Date,
           end_date: End_Date
           // is_active defaults to false in DB
         }
@@ -61,12 +61,49 @@ export const Get_All_Sessions = async (req, res) => {
 
     if (error) throw error;
 
-    res.json({ success: true, count: List.length, data: List });
+    // Find the currently active session
+    const Active_Session = List.find(s => s.is_active) || null;
+
+    res.json({
+      success: true,
+      count: List.length,
+      active_session: Active_Session,
+      data: List
+    });
 
   } catch (Error) {
     res.status(500).json({ success: false, error: Error.message });
   }
 };
+
+
+
+// --- GET CURRENTLY ACTIVE SESSION ---
+export const Get_Active_Session = async (req, res) => {
+  try {
+    const { data: Active, error } = await Supabase_Client
+      .from('AcademicSession')
+      .select('*')
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    if (!Active) {
+      return res.json({
+        success: true,
+        message: "No active session found.",
+        data: null
+      });
+    }
+
+    res.json({ success: true, data: Active });
+
+  } catch (Error) {
+    res.status(500).json({ success: false, error: Error.message });
+  }
+};
+
 
 
 
@@ -90,27 +127,35 @@ export const Activate_Session = async (req, res) => {
   if (!Session_Id) return res.status(400).json({ success: false, message: "Session_Id required." });
 
   try {
-    // 1. PRE-CHECK: Is there already an active session?
-    const { data: Active_Sessions, error: Check_Error } = await Supabase_Client
+    // 1. Verify the target session exists
+    const { data: Target_Session, error: Check_Err } = await Supabase_Client
       .from('AcademicSession')
-      .select('session_id, session_name')
-      .eq('is_active', true);
+      .select('session_id, session_name, is_active')
+      .eq('session_id', Session_Id)
+      .single();
 
-    if (Check_Error) throw Check_Error;
-
-    // If any active session exists (and it's not the one we are trying to activate)
-    if (Active_Sessions.length > 0) {
-      const Current_Active = Active_Sessions[0];
-      // Only block if the active one is DIFFERENT from the one we want to activate
-      if (Current_Active.session_id != Session_Id) {
-        return res.status(409).json({ 
-          success: false, 
-          message: `Cannot activate. '${Current_Active.session_name}' is currently active. Please deactivate it first.` 
-        });
-      }
+    if (Check_Err || !Target_Session) {
+      return res.status(404).json({ success: false, message: "Session not found." });
     }
 
-    // 2. ACTIVATE the target session
+    // If already active, no action needed
+    if (Target_Session.is_active) {
+      return res.json({
+        success: true,
+        message: "Session is already active.",
+        data: Target_Session
+      });
+    }
+
+    // 2. Deactivate ALL currently active sessions (enforce single active session rule)
+    const { error: Deactivate_Error } = await Supabase_Client
+      .from('AcademicSession')
+      .update({ is_active: false })
+      .eq('is_active', true);
+
+    if (Deactivate_Error) throw Deactivate_Error;
+
+    // 3. Activate the target session
     const { data: Updated, error: Update_Error } = await Supabase_Client
       .from('AcademicSession')
       .update({ is_active: true })
@@ -120,12 +165,17 @@ export const Activate_Session = async (req, res) => {
 
     if (Update_Error) throw Update_Error;
 
-    res.json({ success: true, message: "Session Activated successfully.", data: Updated });
+    res.json({
+      success: true,
+      message: `Session '${Updated.session_name}' is now the active session.`,
+      data: Updated
+    });
 
   } catch (Error) {
     res.status(500).json({ success: false, message: "Server Error", error: Error.message });
   }
 };
+
 
 
 

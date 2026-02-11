@@ -16,19 +16,25 @@ export const Student_Login = async (req, res) => {
         console.log(`Student Login Attempt: ${Phone_Number}`);
 
         // --- STEP 2: FIND ALL STUDENTS WITH THIS PHONE ---
+        // Now joins with Student_School_Enrollment to get school info
         const { data: Students, error: Db_Error } = await Supabase_Client
             .from('Student')
             .select(`
-        student_id,
-        school_id,
-        student_name,
-        parent_name,
-        email,
-        phone,
-        is_active,
-        firebase_id,
-        School ( school_id, school_name )
-      `)
+                student_id,
+                student_name,
+                parent_name,
+                email,
+                phone,
+                is_active,
+                firebase_id,
+                Student_School_Enrollment (
+                    enrollment_id,
+                    school_id,
+                    is_active,
+                    enrolled_at,
+                    School ( school_id, school_name )
+                )
+            `)
             .eq('phone', Phone_Number)
             .order('student_name', { ascending: true });
 
@@ -40,19 +46,30 @@ export const Student_Login = async (req, res) => {
             });
         }
 
-        // --- STEP 3: FILTER ACTIVE STUDENTS ONLY ---
-        const Active_Students = Students.filter(student => student.is_active === true);
+        // --- STEP 3: FILTER ACTIVE STUDENTS WITH ACTIVE ENROLLMENTS ---
+        // Student must be active AND have at least one active school enrollment
+        const Active_Students_With_Enrollments = Students
+            .filter(student => student.is_active === true)
+            .map(student => {
+                // Get only active enrollments
+                const Active_Enrollments = student.Student_School_Enrollment
+                    .filter(e => e.is_active === true);
+                return {
+                    ...student,
+                    Active_Enrollments
+                };
+            })
+            .filter(student => student.Active_Enrollments.length > 0);
 
-        if (Active_Students.length === 0) {
+        if (Active_Students_With_Enrollments.length === 0) {
             return res.status(403).json({
                 success: false,
-                message: "All student accounts associated with this phone are deactivated. Please contact your school."
+                message: "All student accounts associated with this phone are deactivated or not enrolled in any school. Please contact your school."
             });
         }
 
         // --- STEP 4: LINK FIREBASE ID (First Time Login for each student) ---
-        // Update firebase_id for students who don't have it yet
-        const Students_To_Update = Active_Students.filter(s => !s.firebase_id);
+        const Students_To_Update = Active_Students_With_Enrollments.filter(s => !s.firebase_id);
 
         if (Students_To_Update.length > 0) {
             const Student_Ids = Students_To_Update.map(s => s.student_id);
@@ -65,30 +82,39 @@ export const Student_Login = async (req, res) => {
             console.log(`First login: Linked Firebase ID to ${Student_Ids.length} student(s).`);
         }
 
-        // --- STEP 5: GENERATE TOKENS FOR EACH STUDENT ---
-        // Generate a JWT token for each active student profile
-        const Student_Profiles = Active_Students.map(student => {
-            const Token = jwt.sign(
-                {
-                    user_id: student.student_id,
-                    school_id: student.school_id,
-                    role: 'Student',
-                    firebase_id: Firebase_Id
-                },
-                process.env.JWT_SECRET,
-                { expiresIn: '30d' } // Longer expiry for students (mobile app)
-            );
+        // --- STEP 5: GENERATE TOKENS FOR EACH STUDENT PROFILE ---
+        // Each student can only have ONE active school enrollment
+        // Multiple profiles = multiple students sharing same phone (siblings)
+        const Student_Profiles = [];
 
-            return {
-                student_id: student.student_id,
-                student_name: student.student_name,
-                parent_name: student.parent_name,
-                school_id: student.school_id,
-                school_name: student.School?.school_name || 'Unknown School',
-                email: student.email,
-                token: Token
-            };
-        });
+        for (const student of Active_Students_With_Enrollments) {
+            for (const enrollment of student.Active_Enrollments) {
+                const Token = jwt.sign(
+                    {
+                        user_id: student.student_id,
+                        school_id: enrollment.school_id,
+                        enrollment_id: enrollment.enrollment_id,
+                        role: 'Student',
+                        firebase_id: Firebase_Id
+                    },
+                    process.env.JWT_SECRET,
+                    { expiresIn: '30d' } // Longer expiry for students (mobile app)
+                );
+
+                Student_Profiles.push({
+                    student_id: student.student_id,
+                    student_name: student.student_name,
+                    parent_name: student.parent_name,
+                    email: student.email,
+                    // School-specific info from enrollment
+                    school_id: enrollment.school_id,
+                    school_name: enrollment.School?.school_name || 'Unknown School',
+                    enrollment_id: enrollment.enrollment_id,
+                    enrolled_at: enrollment.enrolled_at,
+                    token: Token
+                });
+            }
+        }
 
         // --- STEP 6: SUCCESS RESPONSE ---
         res.json({

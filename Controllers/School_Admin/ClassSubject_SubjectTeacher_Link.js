@@ -1,4 +1,4 @@
-import Supabase_Client from '../../Supabase_Client.js'; 
+import Supabase_Client from '../../Supabase_Client.js';
 
 
 
@@ -13,7 +13,6 @@ export const Link_ClassSubject_SubjectTeacher_SA = async (req, res) => {
 
   try {
     // --- SECURITY CHECK 1: DOES THE SUBJECT BELONG TO MY SCHOOL? ---
-    // We need to go: Class_Subject_Relation -> Class -> school_id
     const { data: Subject_Check, error: Sub_Err } = await Supabase_Client
       .from('Class_Subject_Relation')
       .select(`
@@ -23,30 +22,34 @@ export const Link_ClassSubject_SubjectTeacher_SA = async (req, res) => {
       .eq('class_subject_relation_id', Class_Subject_Relation_Id)
       .single();
 
-    if (Sub_Err || !Subject_Check) return res.status(404).json({ success: false, message: "Subject Relation not found." });
+    if (Sub_Err || !Subject_Check) {
+      return res.status(404).json({ success: false, message: "Subject Relation not found." });
+    }
 
     if (Subject_Check.Class.school_id != My_School_Id) {
       return res.status(403).json({ success: false, message: "Access Denied: This Subject/Class does not belong to your school." });
     }
 
-    // --- SECURITY CHECK 2: DOES THE TEACHER BELONG TO MY SCHOOL? ---
-    const { data: Teacher_Check } = await Supabase_Client
-      .from('Teacher')
-      .select('school_id')
+    // --- SECURITY CHECK 2: IS TEACHER ENROLLED AT MY SCHOOL? ---
+    const { data: Teacher_Enrollment } = await Supabase_Client
+      .from('Teacher_School_Enrollment')
+      .select('enrollment_id')
       .eq('teacher_id', Teacher_Id)
-      .single();
+      .eq('school_id', My_School_Id)
+      .eq('is_active', true)
+      .maybeSingle();
 
-    if (!Teacher_Check || Teacher_Check.school_id != My_School_Id) {
-      return res.status(403).json({ success: false, message: "Access Denied: This Teacher does not belong to your school." });
+    if (!Teacher_Enrollment) {
+      return res.status(403).json({ success: false, message: "Access Denied: This Teacher is not employed at your school." });
     }
 
     // --- EXECUTE LINK ---
     const { data: Link, error } = await Supabase_Client
       .from('ClassSubject_SubjectTeacher_Relation')
       .insert([
-        { 
-          class_subject_relation_id: Class_Subject_Relation_Id, 
-          teacher_id: Teacher_Id 
+        {
+          class_subject_relation_id: Class_Subject_Relation_Id,
+          teacher_id: Teacher_Id
         }
       ])
       .select()
@@ -70,8 +73,6 @@ export const Link_ClassSubject_SubjectTeacher_SA = async (req, res) => {
 
 
 
-
-
 // --- 2. UNLINK (REMOVE) TEACHER FROM SUBJECT (SA) ---
 export const Unlink_ClassSubject_SubjectTeacher_SA = async (req, res) => {
   const My_School_Id = req.user.user_id;
@@ -83,7 +84,6 @@ export const Unlink_ClassSubject_SubjectTeacher_SA = async (req, res) => {
 
   try {
     // --- SECURITY CHECK: VERIFY OWNERSHIP ---
-    // Path: Link Table -> Class_Subject_Relation -> Class -> school_id
     const { data: Link_Check, error: Fetch_Err } = await Supabase_Client
       .from('ClassSubject_SubjectTeacher_Relation')
       .select(`
@@ -99,9 +99,8 @@ export const Unlink_ClassSubject_SubjectTeacher_SA = async (req, res) => {
       return res.status(404).json({ success: false, message: "Assignment Link not found." });
     }
 
-    // Check School ID match
     const Target_School_Id = Link_Check.Class_Subject_Relation?.Class?.school_id;
-    
+
     if (Target_School_Id != My_School_Id) {
       return res.status(403).json({ success: false, message: "Access Denied: You cannot delete this assignment." });
     }
@@ -121,9 +120,6 @@ export const Unlink_ClassSubject_SubjectTeacher_SA = async (req, res) => {
     res.status(500).json({ success: false, message: "Server Error", error: Error.message });
   }
 };
-
-
-
 
 
 

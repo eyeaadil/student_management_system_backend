@@ -1,4 +1,4 @@
-import Supabase_Client from '../../Supabase_Client.js'; 
+import Supabase_Client from '../../Supabase_Client.js';
 
 
 
@@ -24,15 +24,17 @@ export const Link_ClassTeacher_To_Class_SA = async (req, res) => {
       return res.status(403).json({ success: false, message: "Access Denied: This Class does not belong to your school." });
     }
 
-    // --- SECURITY CHECK 2: DOES THE TEACHER BELONG TO ME? ---
-    const { data: Teacher_Check } = await Supabase_Client
-      .from('Teacher')
-      .select('school_id')
+    // --- SECURITY CHECK 2: IS TEACHER ENROLLED AT MY SCHOOL? ---
+    const { data: Teacher_Enrollment } = await Supabase_Client
+      .from('Teacher_School_Enrollment')
+      .select('enrollment_id')
       .eq('teacher_id', Teacher_Id)
-      .single();
+      .eq('school_id', My_School_Id)
+      .eq('is_active', true)
+      .maybeSingle();
 
-    if (!Teacher_Check || Teacher_Check.school_id != My_School_Id) {
-      return res.status(403).json({ success: false, message: "Access Denied: This Teacher does not belong to your school." });
+    if (!Teacher_Enrollment) {
+      return res.status(403).json({ success: false, message: "Access Denied: This Teacher is not employed at your school." });
     }
 
     // --- EXECUTE LINK ---
@@ -62,13 +64,6 @@ export const Link_ClassTeacher_To_Class_SA = async (req, res) => {
 
 
 
-
-
-
-
-
-
-
 // --- 2. UNLINK (REMOVE) TEACHER FROM CLASS (SA) ---
 export const Unlink_ClassTeacher_To_Class_SA = async (req, res) => {
   const My_School_Id = req.user.user_id;
@@ -80,7 +75,6 @@ export const Unlink_ClassTeacher_To_Class_SA = async (req, res) => {
 
   try {
     // --- SECURITY CHECK: VERIFY RELATION OWNERSHIP ---
-    // We fetch the relation AND the linked Class to see the School ID
     const { data: Relation_Check, error: Fetch_Err } = await Supabase_Client
       .from('Class_ClassTeacher_Relation')
       .select(`
@@ -96,7 +90,6 @@ export const Unlink_ClassTeacher_To_Class_SA = async (req, res) => {
       return res.status(404).json({ success: false, message: "Assignment not found." });
     }
 
-    // Check if the Class in this relationship belongs to My School
     if (Relation_Check.Class.school_id != My_School_Id) {
       return res.status(403).json({ success: false, message: "Access Denied: You cannot delete this assignment." });
     }
@@ -116,12 +109,6 @@ export const Unlink_ClassTeacher_To_Class_SA = async (req, res) => {
     res.status(500).json({ success: false, message: "Server Error", error: Error.message });
   }
 };
-
-
-
-
-
-
 
 
 
