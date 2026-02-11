@@ -31,3 +31,31 @@ print_header() {
   echo "============================================="
   echo ""
 }
+
+# -------- JSON CURL HELPER --------
+json_curl() {
+    # Capture response + status code
+    # We append -s -w "\n%{http_code}" to the arguments
+    RESPONSE=$(curl -s -w "\n%{http_code}" "$@")
+    
+    # Extract Body (all lines except last) and Status (last line)
+    BODY=$(echo "$RESPONSE" | sed '$d')
+    HTTP_STATUS=$(echo "$RESPONSE" | tail -n 1)
+    
+    # Format JSON
+    if [ -n "$BODY" ]; then
+      # Try Python JSON tool first
+      if echo "$BODY" | python3 -m json.tool > /dev/null 2>&1; then
+          echo "$BODY" | python3 -m json.tool
+      else
+          # Fallback to raw output if not valid JSON
+          echo "$BODY"
+      fi
+    else
+        echo "(No Body)"
+    fi
+    
+    echo ""
+    echo "HTTP Status: $HTTP_STATUS"
+    echo ""
+}

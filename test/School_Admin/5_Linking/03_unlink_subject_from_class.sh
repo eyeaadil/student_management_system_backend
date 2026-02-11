@@ -4,7 +4,7 @@ source "$(dirname "$0")/../../config.sh"
 print_header "SA - Unlink Subject from Class"
 echo "POST $BASE_URL/SA/Unlink_Subject"
 
-curl -s -w "\n\nHTTP Status: %{http_code}\n" \
+json_curl \
   -X POST "$BASE_URL/SA/Unlink_Subject" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $SA_TOKEN" \

@@ -4,7 +4,7 @@ source "$(dirname "$0")/../../config.sh"
 print_header "SA - Create Teacher"
 echo "POST $BASE_URL/SA/Create_Teacher"
 
-curl -s -w "\n\nHTTP Status: %{http_code}\n" \
+json_curl \
   -X POST "$BASE_URL/SA/Create_Teacher" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $SA_TOKEN" \

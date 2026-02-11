@@ -4,7 +4,7 @@ source "$(dirname "$0")/../../config.sh"
 print_header "Create Student And Link To Class"
 echo "POST $BASE_URL/BA/Create_Student_And_Link_To_Class"
 
-curl -s -w "\n\nHTTP Status: %{http_code}\n" \
+json_curl \
   -X POST "$BASE_URL/BA/Create_Student_And_Link_To_Class" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BA_TOKEN" \

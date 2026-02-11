@@ -8,7 +8,7 @@ echo "POST $BASE_URL/Student/Login_Student"
 echo "NOTE: Student login route may not be wired in Server.js yet."
 echo ""
 
-curl -s -w "\n\nHTTP Status: %{http_code}\n" \
+json_curl \
   -X POST "$BASE_URL/Student/Login_Student" \
   -H "Content-Type: application/json" \
   -d "{

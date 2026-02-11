@@ -5,7 +5,7 @@ print_header "Delete Class"
 echo "POST $BASE_URL/BA/Delete_Class"
 echo ">>> WARNING: This deletes the class."
 
-curl -s -w "\n\nHTTP Status: %{http_code}\n" \
+json_curl \
   -X POST "$BASE_URL/BA/Delete_Class" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BA_TOKEN" \

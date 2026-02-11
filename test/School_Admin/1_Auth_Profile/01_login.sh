@@ -6,7 +6,7 @@ FIREBASE_TOKEN="PASTE_FIREBASE_TOKEN_FROM_INDEX_HTML"
 print_header "SA Login"
 echo "POST $BASE_URL/SA/Login_School_Admin"
 
-curl -s -w "\n\nHTTP Status: %{http_code}\n" \
+json_curl \
   -X POST "$BASE_URL/SA/Login_School_Admin" \
   -H "Content-Type: application/json" \
   -d "{

@@ -6,7 +6,7 @@ FIREBASE_TOKEN="eyJhbGciOiJSUzI1NiIsImtpZCI6IjRiMTFjYjdhYjVmY2JlNDFlOTQ4MDk0ZTlk
 print_header "BA Login"
 echo "POST $BASE_URL/BA/Login_Business_Admin"
 
-curl -s -w "\n\nHTTP Status: %{http_code}\n" \
+json_curl \
   -X POST "$BASE_URL/BA/Login_Business_Admin" \
   -H "Content-Type: application/json" \
   -d "{

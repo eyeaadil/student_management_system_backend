@@ -4,7 +4,7 @@ source "$(dirname "$0")/../../config.sh"
 print_header "Toggle School Status (Suspend)"
 echo "POST $BASE_URL/BA/Toggle_School_Status"
 
-curl -s -w "\n\nHTTP Status: %{http_code}\n" \
+json_curl \
   -X POST "$BASE_URL/BA/Toggle_School_Status" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BA_TOKEN" \
@@ -17,7 +17,7 @@ curl -s -w "\n\nHTTP Status: %{http_code}\n" \
 echo ""
 echo "--- Now re-activating ---"
 
-curl -s -w "\n\nHTTP Status: %{http_code}\n" \
+json_curl \
   -X POST "$BASE_URL/BA/Toggle_School_Status" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $BA_TOKEN" \
