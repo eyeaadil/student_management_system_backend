@@ -16,82 +16,117 @@ export const Create_Student = async (req, res) => {
   }
 
   try {
-    // 3. PRE-CHECK: Check ONLY if Email already exists
-    // (We removed the Phone check so siblings can share the same number)
-    if (Email) {
-      const { data: Existing_Email, error: Check_Error } = await Supabase_Client
-        .from('Student')
-        .select('student_id')
-        .eq('email', Email)
-        .maybeSingle(); // Returns null if not found, object if found
+    let Final_Student_Id = null;
+    let Deactivated_Old_School = false;
+    let Is_New_Student = true;
 
-      if (Check_Error) throw Check_Error;
-
-      if (Existing_Email) {
-        return res.status(409).json({ success: false, message: "A Student with this Email already exists." });
-      }
-    }
-
-    // 4. Verify School exists
-    const { data: School_Check, error: School_Error } = await Supabase_Client
-      .from('School')
-      .select('school_id')
-      .eq('school_id', School_Id)
-      .single();
-
-    if (School_Error || !School_Check) {
-      return res.status(400).json({ success: false, message: "Invalid School_Id. School not found." });
-    }
-
-    // 5. Insert into Student Table (WITHOUT school_id - now managed via enrollments)
-    const { data: New_Student, error: Db_Error } = await Supabase_Client
+    // 3. SMART ENROLLMENT: Check if Student already exists (Phone + Exact Name Match)
+    const { data: Existing_Students } = await Supabase_Client
       .from('Student')
-      .insert([
-        {
+      .select('student_id, student_name')
+      .eq('phone', Phone); // Fetch all with same phone
+
+    // Filter for exact name match (Case Insensitive or Exact?) -> Let's do Exact for safety
+    const Matched_Student = Existing_Students?.find(s => s.student_name === Student_Name);
+
+    if (Matched_Student) {
+      // --- EXISTING STUDENT FOUND: REUSE ID ---
+      Final_Student_Id = Matched_Student.student_id;
+      Is_New_Student = false;
+
+      // Deactivate ANY previous active enrollments (Transfer Logic)
+      const { error: Deactivate_Err } = await Supabase_Client
+        .from('Student_School_Enrollment')
+        .update({ 
+          is_active: false, 
+          left_school_at: new Date().toISOString(),
+          leaving_reason: 'Transferred to School ' + School_Id
+        })
+        .eq('student_id', Final_Student_Id)
+        .eq('is_active', true);
+
+      if (Deactivate_Err) throw Deactivate_Err;
+      Deactivated_Old_School = true;
+
+    } else {
+      // --- NEW STUDENT OR SIBLING: CREATE NEW ---
+      
+      // Email Uniqueness Check (Only if creating new)
+      if (Email) {
+        const { data: Existing_Email } = await Supabase_Client
+          .from('Student')
+          .select('student_id')
+          .eq('email', Email)
+          .maybeSingle();
+
+        if (Existing_Email) {
+          return res.status(409).json({ success: false, message: "A Student with this Email already exists." });
+        }
+      }
+
+      // 4. Verify School exists
+      const { data: School_Check, error: School_Error } = await Supabase_Client
+        .from('School')
+        .select('school_id')
+        .eq('school_id', School_Id)
+        .single();
+
+      if (School_Error || !School_Check) {
+        return res.status(400).json({ success: false, message: "Invalid School_Id. School not found." });
+      }
+
+      // 5. Insert New Student
+      const { data: New_Student, error: Db_Error } = await Supabase_Client
+        .from('Student')
+        .insert([{
           student_name: Student_Name,
           parent_name: Parent_Name,
-          phone: Phone,     // Can be same as another student (siblings)
+          phone: Phone,
           email: Email || null
-        }
-      ])
-      .select()
-      .single();
+        }])
+        .select()
+        .single();
 
-    if (Db_Error) {
-      // Unique Constraint Error (email already in use)
-      if (Db_Error.code === '23505') {
-        return res.status(409).json({ success: false, message: "This Email is already in use." });
+      if (Db_Error) {
+        if (Db_Error.code === '23505') return res.status(409).json({ success: false, message: "Email already in use." });
+        throw Db_Error;
       }
-      throw Db_Error;
+
+      Final_Student_Id = New_Student.student_id;
     }
 
-    // 6. Create School Enrollment Record
+    // 6. Create NEW School Enrollment (Active)
     const { data: Enrollment, error: Enrollment_Error } = await Supabase_Client
       .from('Student_School_Enrollment')
-      .insert([
-        {
-          student_id: New_Student.student_id,
-          school_id: School_Id,
-          is_active: true
-        }
-      ])
+      .insert([{
+        student_id: Final_Student_Id,
+        school_id: School_Id,
+        is_active: true
+      }])
       .select()
       .single();
 
     if (Enrollment_Error) {
-      // Rollback: Delete the student if enrollment fails
-      await Supabase_Client.from('Student').delete().eq('student_id', New_Student.student_id);
+      if (Is_New_Student) {
+        // Rollback new student if enrollment fails
+        await Supabase_Client.from('Student').delete().eq('student_id', Final_Student_Id);
+      }
       throw Enrollment_Error;
     }
 
     // 7. Success Response
     res.status(201).json({
       success: true,
-      message: "New Student created and enrolled successfully.",
+      message: Is_New_Student 
+        ? "New Student created and enrolled successfully." 
+        : "Existing Student transferred and enrolled successfully.",
       data: {
-        ...New_Student,
+        student_id: Final_Student_Id,
+        student_name: Student_Name,
         school_id: School_Id,
-        enrollment_id: Enrollment.enrollment_id
+        enrollment_id: Enrollment.enrollment_id,
+        is_transfer: !Is_New_Student,
+        previous_school_deactivated: Deactivated_Old_School
       }
     });
 

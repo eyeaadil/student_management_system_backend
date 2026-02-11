@@ -38,6 +38,8 @@ export const Business_Admin_Login = async (req, res) => {
       .eq('phone', Phone_Number)
       .single();
 
+    console.log("DEBUG - Phone lookup:", Phone_Number, "| Error:", Db_Error, "| User:", User);
+
     if (Db_Error || !User) {
       return res.status(403).json({ 
         success: false, 

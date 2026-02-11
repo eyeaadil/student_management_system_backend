@@ -55,21 +55,67 @@ export const Create_Student_And_Link_To_Class_BA = async (req, res) => {
       return res.status(400).json({ success: false, message: "Class does not belong to the specified school." });
     }
 
-    // --- STEP 3: CREATE NEW STUDENT (Without school_id) ---
-    const { data: New_Student, error: Create_Err } = await Supabase_Client
+    // --- STEP 3: SMART ENROLLMENT (Phone + Exact Name Match) ---
+    const { data: Existing_Students } = await Supabase_Client
       .from('Student')
-      .insert([{
-        student_name: Student_Name,
-        parent_name: Parent_Name,
-        phone: Phone,
-        email: Email || null
-      }])
-      .select()
-      .single();
+      .select('student_id, student_name')
+      .eq('phone', Phone); // Fetch all with same phone
 
-    if (Create_Err) throw Create_Err;
+    // Filter for exact name match
+    const Matched_Student = Existing_Students?.find(s => s.student_name === Student_Name);
 
-    Final_Student_Id = New_Student.student_id;
+    let Is_New_Student = true;
+    let Deactivated_Old_School = false;
+
+    if (Matched_Student) {
+      // --- EXISTING STUDENT FOUND: REUSE ID ---
+      Final_Student_Id = Matched_Student.student_id;
+      Is_New_Student = false;
+
+      // Deactivate previous active enrollments (Transfer Logic)
+      const { error: Deactivate_Err } = await Supabase_Client
+        .from('Student_School_Enrollment')
+        .update({ 
+          is_active: false, 
+          left_school_at: new Date().toISOString(),
+          leaving_reason: 'Transferred to School ' + School_Id
+        })
+        .eq('student_id', Final_Student_Id)
+        .eq('is_active', true);
+
+      if (Deactivate_Err) throw Deactivate_Err;
+      Deactivated_Old_School = true;
+
+    } else {
+      // --- NEW STUDENT OR SIBLING: CREATE NEW ---
+      
+      // Email Check
+      if (Email) {
+        const { data: Existing_Email } = await Supabase_Client
+          .from('Student')
+          .select('student_id')
+          .eq('email', Email)
+          .maybeSingle();
+
+        if (Existing_Email) {
+          return res.status(409).json({ success: false, message: "A Student with this Email already exists." });
+        }
+      }
+
+      const { data: New_Student, error: Create_Err } = await Supabase_Client
+        .from('Student')
+        .insert([{
+          student_name: Student_Name,
+          parent_name: Parent_Name,
+          phone: Phone,
+          email: Email || null
+        }])
+        .select()
+        .single();
+
+      if (Create_Err) throw Create_Err;
+      Final_Student_Id = New_Student.student_id;
+    }
 
     // --- STEP 4: CREATE SCHOOL ENROLLMENT ---
     const { data: School_Enrollment, error: Enroll_Err } = await Supabase_Client
@@ -83,8 +129,9 @@ export const Create_Student_And_Link_To_Class_BA = async (req, res) => {
       .single();
 
     if (Enroll_Err) {
-      // Rollback: Delete student if enrollment fails
-      await Supabase_Client.from('Student').delete().eq('student_id', Final_Student_Id);
+      if (Is_New_Student) {
+        await Supabase_Client.from('Student').delete().eq('student_id', Final_Student_Id);
+      }
       throw Enroll_Err;
     }
 
@@ -102,31 +149,35 @@ export const Create_Student_And_Link_To_Class_BA = async (req, res) => {
       .single();
 
     if (Link_Error) {
-      // HANDLE ROLL NUMBER COLLISION
       if (Link_Error.code === '23505' && Link_Error.details.includes('roll_no')) {
         return res.status(409).json({
           success: false,
-          // IMPORTANT: We tell frontend the Student ID so they can retry linking later
-          message: `Student Profile Created (ID: ${Final_Student_Id}), BUT Roll No ${Roll_No} is already taken in this class. Please update Roll No.`,
+          message: `Student Profile Created (ID: ${Final_Student_Id}), BUT Roll No ${Roll_No} is already taken in this class.`,
           student_id: Final_Student_Id,
           school_enrollment_id: School_Enrollment_Id,
           error_type: "ROLL_NO_COLLISION"
         });
       }
-      // Rollback: Delete school enrollment and student on other errors
+      // Rollback
       await Supabase_Client.from('Student_School_Enrollment').delete().eq('enrollment_id', School_Enrollment_Id);
-      await Supabase_Client.from('Student').delete().eq('student_id', Final_Student_Id);
+      if (Is_New_Student) {
+        await Supabase_Client.from('Student').delete().eq('student_id', Final_Student_Id);
+      }
       throw Link_Error;
     }
 
     // --- SUCCESS ---
     res.status(201).json({
       success: true,
-      message: "Student Created, Enrolled in School, and Linked to Class Successfully.",
+      message: Is_New_Student 
+        ? "Student Created, Enrolled, and Linked Successfully."
+        : "Existing Student Transferred, Enrolled, and Linked Successfully.",
       data: {
-        student: New_Student,
+        student_id: Final_Student_Id,
+        student_name: Student_Name,
         school_enrollment: School_Enrollment,
-        class_enrollment: Class_Enrollment
+        class_enrollment: Class_Enrollment,
+        is_transfer: !Is_New_Student
       }
     });
 

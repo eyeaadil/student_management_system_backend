@@ -4,6 +4,7 @@ import Supabase_Client from '../../Supabase_Client.js';
 
 
 // --- A. BUSINESS ADMIN (Creates Teacher for ANY School) ---
+// --- A. BUSINESS ADMIN (Creates Teacher for ANY School) ---
 export const Create_Teacher_BA = async (req, res) => {
   const { School_Id, Name, Phone, Email } = req.body;
 
@@ -12,44 +13,93 @@ export const Create_Teacher_BA = async (req, res) => {
   }
 
   try {
-    // 1. Verify School exists
-    const { data: School_Check, error: School_Error } = await Supabase_Client
-      .from('School')
-      .select('school_id')
-      .eq('school_id', School_Id)
-      .single();
+    let Final_Teacher_Id = null;
+    let Is_New_Teacher = true;
+    let Deactivated_Old_Enrollment = false;
 
-    if (School_Error || !School_Check) {
-      return res.status(400).json({ success: false, message: "Invalid School_Id. School not found." });
-    }
-
-    // 2. Create Teacher (without school_id - now managed via enrollments)
-    const { data: New_Teacher, error } = await Supabase_Client
+    // 1. SMART ENROLLMENT: Check if Teacher already exists (Phone + Exact Name Match)
+    // We fetch all teachers with this phone
+    const { data: Existing_Teachers } = await Supabase_Client
       .from('Teacher')
-      .insert([{
-        name: Name,
-        phone: Phone,
-        email: Email || null,
-        is_active: true
-      }])
-      .select()
-      .single();
+      .select('teacher_id, name')
+      .eq('phone', Phone);
 
-    if (error) {
-      if (error.code === '23505') { // Unique Constraint Violation
-        return res.status(409).json({
-          success: false,
-          message: "This Phone Number or Email already exists in the database. Please contact the Technical Team."
-        });
+    // Filter for precise name match
+    const Matched_Teacher = Existing_Teachers?.find(t => t.name === Name);
+
+    if (Matched_Teacher) {
+      // --- EXISTING TEACHER FOUND: REUSE ID ---
+      Final_Teacher_Id = Matched_Teacher.teacher_id;
+      Is_New_Teacher = false;
+
+      // Deactivate ANY previous active enrollments (Transfer Logic)
+      const { error: Deactivate_Err } = await Supabase_Client
+        .from('Teacher_School_Enrollment')
+        .update({ 
+          is_active: false, 
+          left_at: new Date().toISOString(),
+          leaving_reason: 'Transferred to School ' + School_Id
+        })
+        .eq('teacher_id', Final_Teacher_Id)
+        .eq('is_active', true);
+
+      if (Deactivate_Err) throw Deactivate_Err;
+      Deactivated_Old_Enrollment = true;
+
+    } else {
+      // --- NEW TEACHER: CREATE NEW ---
+      
+      // Email Uniqueness Check (Only if creating new)
+      if (Email) {
+        const { data: Existing_Email } = await Supabase_Client
+          .from('Teacher')
+          .select('teacher_id')
+          .eq('email', Email)
+          .maybeSingle();
+
+        if (Existing_Email) {
+          return res.status(409).json({ success: false, message: "A Teacher with this Email already exists." });
+        }
       }
-      throw error;
+
+      // Verify School exists
+      const { data: School_Check, error: School_Error } = await Supabase_Client
+        .from('School')
+        .select('school_id')
+        .eq('school_id', School_Id)
+        .single();
+
+      if (School_Error || !School_Check) {
+        return res.status(400).json({ success: false, message: "Invalid School_Id. School not found." });
+      }
+
+      // Insert New Teacher
+      const { data: New_Teacher, error: Create_Err } = await Supabase_Client
+        .from('Teacher')
+        .insert([{
+          name: Name,
+          phone: Phone,
+          email: Email || null,
+          is_active: true
+        }])
+        .select()
+        .single();
+
+      if (Create_Err) {
+        if (Create_Err.code === '23505') {
+          return res.status(409).json({ success: false, message: "Phone or Email already in use." });
+        }
+        throw Create_Err;
+      }
+
+      Final_Teacher_Id = New_Teacher.teacher_id;
     }
 
-    // 3. Create School Enrollment
+    // 2. Create School Enrollment (Active)
     const { data: Enrollment, error: Enrollment_Error } = await Supabase_Client
       .from('Teacher_School_Enrollment')
       .insert([{
-        teacher_id: New_Teacher.teacher_id,
+        teacher_id: Final_Teacher_Id,
         school_id: School_Id,
         is_active: true
       }])
@@ -57,18 +107,26 @@ export const Create_Teacher_BA = async (req, res) => {
       .single();
 
     if (Enrollment_Error) {
-      // Rollback: Delete teacher if enrollment fails
-      await Supabase_Client.from('Teacher').delete().eq('teacher_id', New_Teacher.teacher_id);
+      if (Is_New_Teacher) {
+        // Rollback new teacher
+        await Supabase_Client.from('Teacher').delete().eq('teacher_id', Final_Teacher_Id);
+      }
       throw Enrollment_Error;
     }
 
+    // 3. Success Response
     res.status(201).json({
       success: true,
-      message: "Teacher created and enrolled successfully.",
+      message: Is_New_Teacher 
+        ? "Teacher created and enrolled successfully." 
+        : "Existing Teacher transferred and enrolled successfully.",
       data: {
-        ...New_Teacher,
+        teacher_id: Final_Teacher_Id,
+        name: Name,
         school_id: School_Id,
-        enrollment_id: Enrollment.enrollment_id
+        enrollment_id: Enrollment.enrollment_id,
+        is_transfer: !Is_New_Teacher,
+        previous_school_deactivated: Deactivated_Old_Enrollment
       }
     });
 

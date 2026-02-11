@@ -2,7 +2,6 @@ import Supabase_Client from "../../Supabase_Client.js";
 
 
 
-
 export const Create_Teacher_SA = async (req, res) => {
   const My_School_Id = req.user.user_id; // From Token
   const { Name, Phone, Email } = req.body;
